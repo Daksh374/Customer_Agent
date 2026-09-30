@@ -299,11 +299,4 @@ Why this hybrid:
 - **Deterministic small talk.** Greetings and thanks don't need retrieval; routing them through RAG produced odd answers and wasted quota.
 - **Sync endpoints.** `/chat` is a plain `def`, so FastAPI runs it in a thread pool. Every dependency (embeddings, Chroma, Groq SDK, sqlite3) is blocking.
 
-## Limitations & next steps
 
-- The bot has no access to real order data. Integrating an orders API (with authentication) would let it answer "where is order #123?" directly.
-- Retrieval is pure vector search. Adding hybrid BM25 + vector search would help with acronyms and exact terms (e.g. "RTO", "GSTIN").
-- Answers aren't streamed. Server-sent events would make responses feel faster.
-- Groq's free tier allows ~8K tokens per minute per model, which is roughly 3 answers a minute. A paid tier or a second provider would be needed for real traffic.
-- There's no answer-quality feedback yet. Collecting 👍/👎 ratings and storing them would allow measuring answer quality over time.
-- Ticket IDs are random 5-digit mocks. A real system would integrate with a helpdesk (Zendesk, Freshdesk).
