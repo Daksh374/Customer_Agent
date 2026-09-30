@@ -1,62 +1,98 @@
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import EscalationBanner from "./EscalationBanner.jsx";
+import { AlertIcon, BotIcon, ThumbDownIcon, ThumbUpIcon } from "./Icons.jsx";
 import KnowledgePanel from "./KnowledgePanel.jsx";
+
+function formatTime(timestamp) {
+  if (!timestamp) return "";
+  return new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// Links in answers open in a new tab so the chat isn't lost.
+// Tables scroll sideways instead of stretching the bubble on narrow screens.
+const markdownComponents = {
+  a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+  table: ({ node, ...props }) => (
+    <div className="table-scroll">
+      <table {...props} />
+    </div>
+  ),
+};
 
 function FeedbackButtons({ value, onFeedback }) {
   return (
-    <div className="feedback" role="group" aria-label="Was this helpful?">
+    <div className="feedback" role="group" aria-label="Was this answer helpful?">
       <button
+        type="button"
         className={value === "up" ? "active" : ""}
         onClick={() => onFeedback("up")}
         aria-pressed={value === "up"}
+        aria-label="Helpful"
         title="Helpful"
       >
-        👍
+        <ThumbUpIcon size={15} />
       </button>
       <button
+        type="button"
         className={value === "down" ? "active" : ""}
         onClick={() => onFeedback("down")}
         aria-pressed={value === "down"}
+        aria-label="Not helpful"
         title="Not helpful"
       >
-        👎
+        <ThumbDownIcon size={15} />
       </button>
     </div>
   );
 }
 
-function OfferButtons({ onReply }) {
+function OfferButtons({ onReply, disabled }) {
   return (
-    <div className="offer-actions">
-      <button className="button-primary small" onClick={() => onReply(true)}>
+    <div className="quick-replies" role="group" aria-label="Connect to a human agent?">
+      <button type="button" className="chip primary" onClick={() => onReply(true)} disabled={disabled}>
         Yes, connect me
       </button>
-      <button className="button-secondary" onClick={() => onReply(false)}>
+      <button type="button" className="chip" onClick={() => onReply(false)} disabled={disabled}>
         No, thanks
       </button>
     </div>
   );
 }
 
-export default function MessageBubble({ message, onFeedback, onRetry, onOfferReply }) {
+function AssistantAvatar() {
+  return (
+    <div className="avatar" aria-hidden="true">
+      <BotIcon size={16} />
+    </div>
+  );
+}
+
+export default function MessageBubble({ message, onFeedback, onRetry, onOfferReply, busy }) {
   if (message.role === "user") {
     return (
-      <div className="message-row user">
-        <div className="bubble user">{message.content}</div>
+      <div className="message-row user" data-message-id={message.id}>
+        <div className="message-stack">
+          <div className="bubble user">{message.content}</div>
+          <span className="meta">{formatTime(message.time)}</span>
+        </div>
       </div>
     );
   }
 
   if (message.role === "error") {
     return (
-      <div className="message-row assistant">
-        <div className="bubble error" role="alert">
-          <span className="error-icon" aria-hidden="true">⚠️</span>
-          <div>
-            <p>{message.content}</p>
-            <button className="link-button" onClick={onRetry}>
-              Try again
-            </button>
+      <div className="message-row assistant" data-message-id={message.id}>
+        <AssistantAvatar />
+        <div className="message-stack">
+          <div className="bubble error" role="alert">
+            <AlertIcon size={18} />
+            <div>
+              <p>{message.content}</p>
+              <button type="button" className="retry-button" onClick={onRetry} disabled={busy}>
+                Try again
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -64,17 +100,23 @@ export default function MessageBubble({ message, onFeedback, onRetry, onOfferRep
   }
 
   return (
-    <div className="message-row assistant">
-      <div className="assistant-stack">
+    <div className="message-row assistant" data-message-id={message.id}>
+      <AssistantAvatar />
+      <div className="message-stack">
         <div className="bubble assistant">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {message.content}
+          </ReactMarkdown>
         </div>
-        {message.offerEscalation && !message.offerAnswered && <OfferButtons onReply={onOfferReply} />}
-        {message.escalate && (
-          <EscalationBanner ticketId={message.ticketId} reason={message.escalationReason} />
+        {message.offerEscalation && !message.offerAnswered && (
+          <OfferButtons onReply={onOfferReply} disabled={busy} />
         )}
+        {message.escalate && <EscalationBanner ticketId={message.ticketId} reason={message.escalationReason} />}
         <KnowledgePanel sources={message.sources} />
-        <FeedbackButtons value={message.feedback} onFeedback={onFeedback} />
+        <div className="meta-row">
+          <span className="meta">{formatTime(message.time)}</span>
+          <FeedbackButtons value={message.feedback} onFeedback={onFeedback} />
+        </div>
       </div>
     </div>
   );

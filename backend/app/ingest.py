@@ -1,4 +1,4 @@
-"""Ingestion pipeline: markdown articles -> chunks -> embeddings -> ChromaDB.
+"""Ingestion pipeline: PDF / markdown articles -> chunks -> embeddings -> ChromaDB.
 
 Run from the backend directory with either:
 
@@ -9,7 +9,9 @@ The script is idempotent: it drops and rebuilds the collection on every run,
 so editing an article and re-running always leaves the store in sync.
 """
 
+import re
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +20,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import chromadb
+from pypdf import PdfReader
 
 from app.config import (
     CHROMA_DIR,
@@ -31,6 +34,16 @@ from app.embeddings import count_tokens, embed_texts
 # Tried in order: split on the coarsest boundary that exists in the text,
 # falling back to finer ones only for pieces that are still too large.
 SEPARATORS = ["\n\n", "\n", ". ", " "]
+
+SUPPORTED_EXTENSIONS = {".pdf", ".md"}
+
+# pypdf extracts ReportLab's bullet glyph as U+007F; other generators use
+# U+2022 or the Symbol-font private-use character U+F0B7.
+PDF_BULLET = re.compile(r"^[\s\x7f\u2022\uf0b7]*[\x7f\u2022\uf0b7]\s*", re.MULTILINE)
+LIST_ITEM = re.compile(r"^(- |\d+\. )")
+
+# Text at least this much larger than the body font is treated as a heading.
+HEADING_SIZE_RATIO = 1.15
 
 
 @dataclass
@@ -50,10 +63,11 @@ class Chunk:
     source_file: str
     article_title: str
     chunk_index: int
+    section: str = ""  # heading of the section the chunk came from ("" = intro)
 
     @property
     def id(self) -> str:
-        """Stable, human-readable ID, e.g. `06-refund-policy.md::1`."""
+        """Stable, human-readable ID, e.g. `04-returns-and-refunds.pdf::1`."""
         return f"{self.source_file}::{self.chunk_index}"
 
 
@@ -61,14 +75,105 @@ class Chunk:
 
 
 def load_articles(directory: Path = KNOWLEDGE_BASE_DIR) -> list[Article]:
-    """Load every `.md` file in `directory`, sorted by filename."""
-    paths = sorted(directory.glob("*.md"))
+    """Load every PDF and markdown article in `directory`, sorted by filename.
+
+    Files without extractable text (e.g. scanned PDFs, which would need OCR)
+    are skipped with a warning rather than failing the whole ingest.
+    """
+    paths = sorted(p for p in directory.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS)
     if not paths:
-        raise FileNotFoundError(f"No markdown files found in {directory}")
-    return [parse_article(path) for path in paths]
+        raise FileNotFoundError(f"No .pdf or .md files found in {directory}")
+
+    articles = []
+    for path in paths:
+        article = parse_article(path)
+        if article.body:
+            articles.append(article)
+        else:
+            print(f"  WARNING: skipped {path.name}: no extractable text (scanned PDF?)")
+    return articles
 
 
 def parse_article(path: Path) -> Article:
+    """Dispatch to the parser for the file's format."""
+    if path.suffix.lower() == ".pdf":
+        return parse_pdf(path)
+    return parse_markdown(path)
+
+
+def parse_pdf(path: Path) -> Article:
+    """Extract an article from a PDF, marking section headings as `## ` lines.
+
+    The body uses the same `## heading` convention as the markdown files, so
+    both formats go through the same section-aware chunking. The title comes
+    from the PDF's metadata, falling back to the first line of text, and is
+    removed from the body (it is prepended again at embedding time).
+    """
+    reader = PdfReader(path)
+    fragments: list[tuple[float, str]] = []
+
+    def collect(text, cm, tm, font_dict, font_size):  # pypdf visitor callback
+        if text.strip():
+            fragments.append((round(font_size * tm[0], 1), text.strip()))
+
+    raw = "\n".join(page.extract_text(visitor_text=collect) or "" for page in reader.pages)
+    lines = clean_pdf_text(raw, find_headings(fragments)).splitlines()
+
+    metadata_title = reader.metadata.title if reader.metadata else None
+    first_line = lines[0].removeprefix("## ") if lines else ""
+    title = (metadata_title or first_line or _title_from_filename(path)).strip()
+    if lines and lines[0].removeprefix("## ").strip() == title:
+        lines = lines[1:]
+    return Article(source_file=path.name, title=title, body="\n".join(lines).strip())
+
+
+def find_headings(fragments: list[tuple[float, str]]) -> set[str]:
+    """Return text set in a noticeably larger font than the body text.
+
+    The body font is the most common size, weighted by characters, so this
+    works for any PDF generator without hard-coding point sizes.
+    """
+    if not fragments:
+        return set()
+    chars_per_size: Counter[float] = Counter()
+    for size, text in fragments:
+        chars_per_size[size] += len(text)
+    body_size = chars_per_size.most_common(1)[0][0]
+    return {text for size, text in fragments if size >= body_size * HEADING_SIZE_RATIO}
+
+
+def clean_pdf_text(text: str, headings: set[str] = frozenset()) -> str:
+    """Undo PDF layout artefacts so the text chunks and embeds like prose.
+
+    Bullet glyphs become "- ", heading lines become "## heading", and lines
+    that were broken only to fit the page width are joined back together.
+    """
+    text = PDF_BULLET.sub("- ", text)
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    lines = [f"## {line}" if line in headings else line for line in lines if line]
+
+    joined: list[str] = []
+    for line in lines:
+        if joined and _continues_previous_line(joined[-1], line):
+            joined[-1] = f"{joined[-1]} {line}"
+        else:
+            joined.append(line)
+    return "\n".join(joined)
+
+
+def _continues_previous_line(previous: str, line: str) -> bool:
+    """True if `line` is the wrapped continuation of `previous`.
+
+    Headings and list items always start a new line. Otherwise a line
+    continues the previous one if it starts in lowercase, or if the previous
+    line stopped mid-sentence (no closing punctuation).
+    """
+    if previous.startswith("## ") or line.startswith("## ") or LIST_ITEM.match(line):
+        return False
+    return line[0].islower() or not previous.endswith((".", ":", "!", "?", ")"))
+
+
+def parse_markdown(path: Path) -> Article:
     """Split a markdown file into its H1 title and the remaining body.
 
     Falls back to a title derived from the filename if there is no H1.
@@ -78,9 +183,15 @@ def parse_article(path: Path) -> Article:
         title = lines[0][2:].strip()
         body = "\n".join(lines[1:]).strip()
     else:
-        title = path.stem.replace("-", " ").title()
+        title = _title_from_filename(path)
         body = "\n".join(lines)
     return Article(source_file=path.name, title=title, body=body)
+
+
+def _title_from_filename(path: Path) -> str:
+    """`05-product-exchange.pdf` -> `Product Exchange`."""
+    stem = re.sub(r"^\d+[-_]", "", path.stem)
+    return stem.replace("-", " ").replace("_", " ").title()
 
 
 # --- Chunking ------------------------------------------------------------------
@@ -153,29 +264,53 @@ def _merge_pieces(pieces: list[str], chunk_size: int, overlap: int) -> list[str]
     return [chunk for chunk in chunks if chunk]
 
 
+def split_sections(body: str) -> list[tuple[str, str]]:
+    """Split an article body at `## ` headings into (heading, text) pairs.
+
+    Text before the first heading (the introduction) gets an empty heading.
+    """
+    sections: list[tuple[str, list[str]]] = [("", [])]
+    for line in body.splitlines():
+        if line.startswith("## "):
+            sections.append((line[3:].strip(), []))
+        else:
+            sections[-1][1].append(line)
+    return [(heading, "\n".join(lines).strip()) for heading, lines in sections if any(lines)]
+
+
 def chunk_article(article: Article) -> list[Chunk]:
-    """Turn one article into a list of `Chunk`s with citation metadata."""
-    return [
-        Chunk(
-            text=text,
-            source_file=article.source_file,
-            article_title=article.title,
-            chunk_index=index,
-        )
-        for index, text in enumerate(split_text(article.body))
-    ]
+    """Chunk each section of an article separately.
+
+    Keeping chunks inside one section means a chunk never mixes two topics,
+    e.g. the end of "Money deducted" with the start of "Charged twice", which
+    would blur its embedding and hurt retrieval for both.
+    """
+    chunks: list[Chunk] = []
+    for heading, text in split_sections(article.body):
+        for piece in split_text(text):
+            chunks.append(
+                Chunk(
+                    text=piece,
+                    source_file=article.source_file,
+                    article_title=article.title,
+                    chunk_index=len(chunks),
+                    section=heading,
+                )
+            )
+    return chunks
 
 
 # --- Storing -------------------------------------------------------------------
 
 
 def text_for_embedding(chunk: Chunk) -> str:
-    """Prefix the article title so every chunk carries its topic.
+    """Prefix the article title and section heading so every chunk carries its topic.
 
-    A chunk from the middle of an article may never mention what the article
-    is about; including the title makes those chunks far easier to retrieve.
+    A chunk from the middle of an article may never mention what it is about;
+    "Payment Methods & Failures > Charged twice for one order" says it outright.
     """
-    return f"{chunk.article_title}\n\n{chunk.text}"
+    header = f"{chunk.article_title} > {chunk.section}" if chunk.section else chunk.article_title
+    return f"{header}\n\n{chunk.text}"
 
 
 def rebuild_collection(client: chromadb.ClientAPI) -> chromadb.Collection:
@@ -199,6 +334,7 @@ def store_chunks(collection: chromadb.Collection, chunks: list[Chunk]) -> None:
                 "source_file": chunk.source_file,
                 "article_title": chunk.article_title,
                 "chunk_index": chunk.chunk_index,
+                "section": chunk.section,
             }
             for chunk in chunks
         ],
@@ -217,7 +353,7 @@ def ingest() -> int:
     print(f"Ingested {len(articles)} articles as {len(chunks)} chunks into '{COLLECTION_NAME}'.")
     for article in articles:
         n = sum(1 for c in chunks if c.source_file == article.source_file)
-        print(f"  {article.source_file:<40} {n} chunk(s)  —  {article.title}")
+        print(f"  {article.source_file:<46} {n} chunk(s)  —  {article.title}")
     return len(chunks)
 
 

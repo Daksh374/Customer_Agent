@@ -1,4 +1,4 @@
-"""LLM calls via Groq: grounded answer generation and escalation classification."""
+"""LLM calls via Groq: query rewriting, grounded answers, and escalation classification."""
 
 import json
 import logging
@@ -11,6 +11,7 @@ from app.config import (
     GROQ_API_KEY,
     GROQ_CLASSIFIER_MODEL,
     GROQ_MODEL,
+    HISTORY_MESSAGE_MAX_CHARS,
     LLM_MAX_RETRIES,
     LLM_TIMEOUT_SECONDS,
     MAX_HISTORY_MESSAGES,
@@ -25,32 +26,65 @@ logger = logging.getLogger(__name__)
 NO_INFO_PHRASE = "I don't have information on that"
 NO_INFO_RESPONSE = f"{NO_INFO_PHRASE} in our help articles. Would you like me to connect you with a human agent?"
 
-ANSWER_SYSTEM_PROMPT = f"""You are the customer support assistant for TaskFlow, a project management SaaS product.
+ANSWER_SYSTEM_PROMPT = f"""You are the customer support assistant for an online shopping (e-commerce) store in India.
 
 Rules:
 - Answer ONLY using the information inside <context>. Do not use outside knowledge.
-- If the context does not contain enough information to answer, reply with exactly:
-  "{NO_INFO_PHRASE}." followed by one short sentence offering to connect them with a human agent.
+- If the context does not contain enough information to answer, reply with exactly
+  "{NO_INFO_PHRASE}." and nothing else.
+- If the customer asks several things and the context covers only some of them, answer those and
+  say briefly which part our help articles don't cover. Otherwise don't add disclaimers about what
+  the articles don't say.
 - Never invent features, prices, policies, limits, URLs, or steps that are not in the context.
-- Never invent contact methods (emails, links, phone numbers, forms). If the customer needs a
-  person, say a TaskFlow support agent will follow up.
-- Be concise and friendly. Use short numbered steps or bullet points for procedures.
+- Never invent contact methods (emails, links, phone numbers, forms).
+- Do not offer to connect the customer with a human agent and do not ask whether they want one.
+  The support system handles handoffs to human agents automatically.
+- You cannot see customer accounts, orders, payments, refunds, or tracking data. Never claim to
+  have checked an order; explain how the customer can check it (e.g. Account > My Orders).
+- Use the conversation to understand what the customer is referring to, but take facts only
+  from <context>. Prefer giving the relevant steps or policy straight away; ask a short
+  clarifying question only if no useful answer is possible without it.
+- Be concise, warm, and professional. Use short numbered steps or bullet points for procedures.
+  Never use tables (the chat is often read on a phone). Write amounts as "Rs." and the number.
 - Refer to the context as "our help articles" if needed; never mention "context" or "chunks".
-- Use earlier conversation turns only to understand follow-up questions, not as a source of facts."""
+- Always reply in English, even if the customer writes in Hindi or Hinglish."""
+
+REWRITE_SYSTEM_PROMPT = """You rewrite a customer's latest message in an online-shopping support chat into a
+standalone question that can be understood without the rest of the conversation.
+
+- Resolve references ("it", "that", "the second one", "what about electronics?") using the conversation.
+- If the message answers a question the assistant asked (e.g. "yes" after "Would you like the steps
+  to return it?"), write the question the customer now wants answered.
+- If the message is already standalone, return it unchanged. Do not answer it or add details.
+- Translate Hindi or Hinglish into English.
+- If the message asks anything at all, even something off-topic, return it as a question.
+- If the message states a need or a problem, turn it into the question the customer wants answered
+  ("I need a GST invoice for my company" -> "How can I get a GST invoice for my company?";
+  "the phone I ordered is not turning on" -> "What should I do if the phone I received does not turn on?").
+- Keep what the customer is talking about from earlier turns (e.g. money deducted for a failed
+  payment is not the same as a refund for a returned item).
+- Return an empty string only if the message cannot be turned into a question: a bare "yes"/"ok"
+  when the assistant did not ask anything, or background with no request (e.g. "I ordered a phone").
+
+Respond with JSON only: {"question": "<standalone question in English, or empty string>"}"""
 
 CLASSIFIER_SYSTEM_PROMPT = """You decide whether a customer support conversation must be escalated to a human agent.
 
 Escalate (escalate=true) ONLY if the customer's latest message itself shows one of these:
-- A billing dispute: the customer says they were charged incorrectly, twice, or without consent
-- Disagreement with a refund decision that was already made (not a question about eligibility)
-- A request to delete their account, workspace, or personal data
-- Legal threats or mentions of lawyers, courts, or regulators
-- Clear frustration or anger (insults, sarcasm, repeated complaints, threats to leave)
+- A payment dispute: the customer says they were charged incorrectly, twice, or without consent
+- Disagreement with a refund, return, or replacement decision that was already made
+- A request to delete their account or personal data
+- A report of a counterfeit/fake product or of fraud on their account
+- Legal threats or mentions of lawyers, consumer courts, police, or regulators
+- Clear frustration or anger (insults, sarcasm, repeated complaints, threats to stop shopping here)
 
 Do NOT escalate:
-- Questions about policies, prices, or eligibility, even if the answer is "no"
-  ("Can I get a refund on my monthly plan?" is a question, not a dispute)
-- How-to questions about billing, refunds, exports, or deletion
+- Questions about policies, prices, delivery times, or eligibility, even if the answer is "no"
+  ("Can I return shoes after 15 days?" is a question, not a dispute)
+- How-to questions about orders, tracking, returns, refunds, payments, or coupons
+- A failed payment where money was deducted: this is routine and auto-reversed by the bank
+  ("Money was deducted but my order was not placed" is routine). Escalate only if the customer
+  says the reversal has not arrived after the stated time (e.g. "it's been 10 days, still no refund").
 - Polite follow-ups or clarifications
 
 Judge the customer's words, not the assistant's answer.
@@ -121,25 +155,48 @@ def format_context(chunks: list[RetrievedChunk]) -> str:
     if not chunks:
         return "(no relevant articles found)"
     return "\n\n".join(
-        f"[Source {i}: {chunk.article_title}]\n{chunk.text}" for i, chunk in enumerate(chunks, 1)
+        f"[Source {i}: {chunk.article_title}{f' > {chunk.section}' if chunk.section else ''}]\n{chunk.text}"
+        for i, chunk in enumerate(chunks, 1)
     )
 
 
+def trim_history(history: list[dict] | None) -> list[dict]:
+    """Keep the most recent messages, shortening long assistant replies.
+
+    The gist of an earlier answer is enough to resolve a follow-up, and
+    full-length answers would multiply the tokens sent on every turn.
+    """
+    trimmed = []
+    for message in (history or [])[-MAX_HISTORY_MESSAGES:]:
+        content = message["content"]
+        if message["role"] == "assistant" and len(content) > HISTORY_MESSAGE_MAX_CHARS:
+            content = content[:HISTORY_MESSAGE_MAX_CHARS].rsplit(" ", 1)[0] + " …"
+        trimmed.append({"role": message["role"], "content": content})
+    return trimmed
+
+
 def build_answer_messages(
-    query: str, chunks: list[RetrievedChunk], history: list[dict] | None = None
+    query: str,
+    chunks: list[RetrievedChunk],
+    history: list[dict] | None = None,
+    standalone_query: str | None = None,
 ) -> list[dict]:
     """Assemble the system prompt, recent history, and context-grounded question."""
-    recent_history = (history or [])[-MAX_HISTORY_MESSAGES:]
-    user_turn = f"<context>\n{format_context(chunks)}\n</context>\n\nCustomer question: {query}"
+    user_turn = f"<context>\n{format_context(chunks)}\n</context>\n\nCustomer message: {query}"
+    if standalone_query and standalone_query.strip().lower() != query.strip().lower():
+        user_turn += f"\n(In this conversation, the customer is asking: {standalone_query})"
     return [
         {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
-        *recent_history,
+        *trim_history(history),
         {"role": "user", "content": user_turn},
     ]
 
 
 def generate_response(
-    query: str, retrieved_chunks: list[RetrievedChunk], history: list[dict] | None = None
+    query: str,
+    retrieved_chunks: list[RetrievedChunk],
+    history: list[dict] | None = None,
+    standalone_query: str | None = None,
 ) -> str:
     """Generate an answer grounded only in `retrieved_chunks`.
 
@@ -153,15 +210,53 @@ def generate_response(
     """
     if not retrieved_chunks:
         return NO_INFO_RESPONSE
-    messages = build_answer_messages(query, retrieved_chunks, history)
+    messages = build_answer_messages(query, retrieved_chunks, history, standalone_query)
     answer = _chat_completion(GROQ_MODEL, messages, temperature=0.2, max_tokens=1024)
     return answer or NO_INFO_RESPONSE
 
 
 def is_no_info_answer(answer: str) -> bool:
-    """True if the model said it couldn't answer from the knowledge base."""
-    normalised = answer.replace("’", "'").lower()
-    return NO_INFO_PHRASE.lower() in normalised
+    """True if the reply is a "no information" answer.
+
+    Only a reply that *starts* with the phrase counts: a partial answer that
+    mentions one uncovered detail still contains useful information.
+    """
+    normalised = answer.replace("\u2019", "'").strip().lower()
+    return normalised.startswith(NO_INFO_PHRASE.lower())
+
+
+# --- Query rewriting -----------------------------------------------------------
+
+
+def format_transcript(history: list[dict]) -> str:
+    """Render messages as "Customer: ..." / "Assistant: ..." lines."""
+    speaker = {"user": "Customer", "assistant": "Assistant"}
+    return "\n".join(f"{speaker[m['role']]}: {m['content']}" for m in history)
+
+
+def rewrite_query(message: str, history: list[dict]) -> str:
+    """Turn the latest message into a standalone English question using the conversation.
+
+    Returns "" when the message isn't a question at all (e.g. a bare "yes"
+    with nothing to agree to). Raises `LLMUnavailableError` on failure, so
+    the caller can fall back to a simpler heuristic.
+    """
+    user_turn = (
+        f"Conversation so far:\n{format_transcript(trim_history(history)) or '(none)'}\n\n"
+        f"Latest customer message: {message}"
+    )
+    raw = _chat_completion(
+        GROQ_CLASSIFIER_MODEL,
+        [{"role": "system", "content": REWRITE_SYSTEM_PROMPT}, {"role": "user", "content": user_turn}],
+        temperature=0,
+        max_tokens=300,
+        response_format={"type": "json_object"},
+    )
+    try:
+        question = json.loads(raw).get("question", "")
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise LLMUnavailableError("Query rewriting returned invalid JSON") from exc
+    return question.strip() if isinstance(question, str) else ""
 
 
 # --- Escalation classification -------------------------------------------------

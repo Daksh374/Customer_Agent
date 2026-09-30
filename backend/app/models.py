@@ -56,6 +56,7 @@ class Ticket(BaseModel):
     ai_response: str
     reason: str
     created_at: str
+    transcript: str | None = None
 
 
 class HealthResponse(BaseModel):

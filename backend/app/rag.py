@@ -23,6 +23,7 @@ class RetrievedChunk:
     article_title: str
     chunk_index: int
     score: float  # cosine similarity in [-1, 1]; higher is more similar
+    section: str = ""  # section heading within the article ("" = intro)
 
 
 @dataclass
@@ -109,6 +110,7 @@ def _to_chunks(results: dict) -> list[RetrievedChunk]:
             article_title=meta["article_title"],
             chunk_index=int(meta["chunk_index"]),
             score=round(1.0 - dist, 4),
+            section=meta.get("section", ""),
         )
         for doc, meta, dist in zip(documents, metadatas, distances)
     ]

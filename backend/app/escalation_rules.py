@@ -10,9 +10,10 @@ import re
 
 # Topics that should always reach a human, regardless of how well the bot answers.
 SENSITIVE_TOPIC_PATTERNS: dict[str, re.Pattern] = {
-    "Billing dispute": re.compile(
+    "Payment dispute": re.compile(
         r"\b(dispute|chargeback|charged (me )?twice|double[- ]charged|billed (me )?twice|overcharged|"
-        r"unauthori[sz]ed (charge|payment)|charged (me )?(after|without)|wrong(ly)? charged)\b",
+        r"unauthori[sz]ed (charge|payment|transaction)|fraudulent (charge|transaction)|"
+        r"charged (me )?(after|without)|wrong(ly)? charged)\b",
         re.IGNORECASE,
     ),
     "Refund disagreement": re.compile(
@@ -22,24 +23,31 @@ SENSITIVE_TOPIC_PATTERNS: dict[str, re.Pattern] = {
         re.IGNORECASE,
     ),
     # Kept tight on purpose: "delete my account" should match, but
-    # "delete a task in the workspace" should not.
+    # "delete an address from my account" should not.
     "Account deletion request": re.compile(
-        r"\b(delete|deleting|close|closing|erase|terminate)\s+(my|our|the|this)?\s*"
-        r"(entire\s+|whole\s+|taskflow\s+)*(account|workspace)\b|"
+        r"\b(delete|deleting|close|closing|erase|terminate|deactivate)\s+(my|the|this)?\s*"
+        r"(entire\s+|whole\s+)*account\b|"
         r"\b(delete|erase|wipe)\s+(all\s+)?(of\s+)?(my|our)\s+data\b|"
         r"\baccount deletion\b|\bright to (be forgotten|erasure)\b|\bgdpr\b",
         re.IGNORECASE,
     ),
     "Legal threat": re.compile(
-        r"\b(lawyer|attorney|legal action|lawsuit|sue|suing|court|"
-        r"small claims|consumer protection|report you to)\b",
+        r"\b(lawyer|advocate|attorney|legal (action|notice)|lawsuit|sue|suing|court|"
+        r"consumer (forum|court|helpline)|police complaint|file an? fir|report you to)\b",
+        re.IGNORECASE,
+    ),
+    "Counterfeit or fraud report": re.compile(
+        r"\b(counterfeit|fake (product|item|phone|shoes)|(not|isn'?t) (genuine|original)|"
+        r"duplicate product|scammed|someone (hacked|used) my account)\b",
         re.IGNORECASE,
     ),
 }
 
 HUMAN_REQUEST_PATTERN = re.compile(
-    r"\b(speak|talk|chat|connect)\b.{0,20}\b(human|person|agent|someone|representative|manager|supervisor)\b|"
-    r"\b(real|live) (person|human|agent)\b|\bescalate\b",
+    r"\b(speak|talk|chat|connect)\b.{0,20}\b(human|person|someone|representative|executive|manager|"
+    r"supervisor|customer care|(?<!delivery )(?<!pickup )(?<!courier )agent)\b|"
+    r"\b(real|live) (person|human|agent)\b|\bhuman (agent|support|representative)\b|"
+    r"\bescalate\b|\bcall ?back\b",
     re.IGNORECASE,
 )
 
@@ -57,14 +65,6 @@ MILD_FRUSTRATION_PATTERN = re.compile(
     r"not helpful|didn'?t help|annoying|frustrat\w*|already tried|keeps? (happening|failing))\b|!{2,}",
     re.IGNORECASE,
 )
-
-# Replies to "Would you like me to connect you with a human agent?"
-AFFIRMATIVE_PATTERN = re.compile(
-    r"^\s*(yes|yeah|yep|yup|sure|ok(ay)?|please|y|definitely|of course)\b|"
-    r"\bconnect me\b|\b(human|real) (agent|person)\b",
-    re.IGNORECASE,
-)
-NEGATIVE_PATTERN = re.compile(r"^\s*(no|nope|nah|not now|no thanks?)\b", re.IGNORECASE)
 
 MIN_LETTERS_FOR_CAPS_CHECK = 12
 CAPS_RATIO_THRESHOLD = 0.7
@@ -122,12 +122,3 @@ def apply_rules(message: str, previous_user_messages: list[str]) -> str | None:
         or check_frustration(message, previous_user_messages)
     )
 
-
-def is_affirmative(message: str) -> bool:
-    """True if the message accepts an offer (e.g. "yes", "sure, connect me")."""
-    return bool(AFFIRMATIVE_PATTERN.search(message)) and not is_negative(message)
-
-
-def is_negative(message: str) -> bool:
-    """True if the message declines an offer (e.g. "no thanks")."""
-    return bool(NEGATIVE_PATTERN.search(message))

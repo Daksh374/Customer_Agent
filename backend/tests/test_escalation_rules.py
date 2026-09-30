@@ -3,9 +3,8 @@ import pytest
 from app.escalation_rules import (
     apply_rules,
     check_frustration,
+    check_human_request,
     check_sensitive_topic,
-    is_affirmative,
-    is_negative,
     is_shouting,
 )
 
@@ -18,9 +17,12 @@ from app.escalation_rules import (
         "My refund was denied and that's not fair",
         "I want my money back",
         "Please delete my account",
-        "How do I close our workspace?",
+        "Close my account permanently",
         "I'll have my lawyer contact you",
-        "I'm going to sue TaskFlow",
+        "I'm going to sue you",
+        "I will file a complaint in consumer court",
+        "This phone is fake, not original",
+        "You sent me a counterfeit watch",
     ],
 )
 def test_sensitive_topics_escalate(message):
@@ -31,10 +33,11 @@ def test_sensitive_topics_escalate(message):
     "message",
     [
         "What is your refund policy?",
-        "How do I delete a task in the workspace?",
-        "How do I remove a member from my workspace?",
-        "How much does the Business plan cost?",
-        "Can I export my data?",
+        "How do I delete an address from my account?",
+        "How do I remove a saved card?",
+        "How much does express delivery cost?",
+        "Can I return shoes after 10 days?",
+        "How do I stay safe from fraud calls?",
     ],
 )
 def test_routine_questions_do_not_escalate(message):
@@ -56,28 +59,28 @@ def test_strong_frustration_escalates_immediately():
 
 
 def test_single_mild_frustration_does_not_escalate():
-    assert check_frustration("Slack notifications are not working", []) is None
+    assert check_frustration("The coupon code is not working", []) is None
 
 
 def test_mild_frustration_matches_contractions():
-    assert check_frustration("Notifications aren't working", ["Exports don't work"]) is not None
+    assert check_frustration("Coupons aren't working", ["The app doesn't work"]) is not None
 
 
 def test_repeated_mild_frustration_escalates():
-    history = ["Slack notifications are not working"]
+    history = ["The coupon code is not working"]
     assert check_frustration("I already tried that, it's still not working", history) is not None
 
 
-@pytest.mark.parametrize("message", ["yes", "Yes please", "sure", "ok", "Yes, connect me to a human agent"])
-def test_affirmative_replies(message):
-    assert is_affirmative(message)
+
+@pytest.mark.parametrize(
+    "message",
+    ["connect me with a human representative.", "I want to talk to customer care", "Can I speak to an agent?",
+     "Please get me a real person", "I need a callback"],
+)
+def test_human_requests_are_detected(message):
+    assert check_human_request(message)
 
 
-@pytest.mark.parametrize("message", ["no", "No thanks", "nope", "not now"])
-def test_negative_replies(message):
-    assert is_negative(message) and not is_affirmative(message)
-
-
-def test_new_question_is_neither_yes_nor_no():
-    message = "How do I export my data?"
-    assert not is_affirmative(message) and not is_negative(message)
+@pytest.mark.parametrize("message", ["How do I contact the delivery agent?", "Can I talk to the delivery agent?"])
+def test_delivery_agent_is_not_a_human_request(message):
+    assert check_human_request(message) is None

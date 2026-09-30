@@ -10,6 +10,7 @@ __pycache__/
 
 # Generated data
 backend/chroma_db/
+backend/support.db
 backend/tickets.db
 
 # Node
