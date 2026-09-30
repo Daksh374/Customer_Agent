@@ -112,9 +112,9 @@ frontend/
     App.jsx                Mounts the chat; "New chat" resets it
     components/
       ChatWindow.jsx       Conversation state, sending, retry, smart auto-scroll
-      ChatHeader.jsx       Brand, online status, "New chat"
+      ChatHeader.jsx       TaskFlow brand + "New chat" button
       WelcomeScreen.jsx    Topic cards + popular questions for an empty chat
-      MessageBubble.jsx    User / AI / error bubbles, timestamps, feedback, Yes/No quick replies
+      MessageBubble.jsx    User / AI / error bubbles, timestamps, Yes/No quick replies
       Composer.jsx         Auto-growing input, send button, Enter to send / Shift+Enter for a new line
       KnowledgePanel.jsx   Collapsible "Sources" list
       EscalationBanner.jsx Ticket card: "Escalated to a human agent · Ticket #XXXXX"
@@ -305,5 +305,5 @@ Why this hybrid:
 - Retrieval is pure vector search. Adding hybrid BM25 + vector search would help with acronyms and exact terms (e.g. "RTO", "GSTIN").
 - Answers aren't streamed. Server-sent events would make responses feel faster.
 - Groq's free tier allows ~8K tokens per minute per model, which is roughly 3 answers a minute. A paid tier or a second provider would be needed for real traffic.
-- Feedback (👍/👎) is only logged to the browser console. Persisting it would enable evaluating answer quality over time.
+- There's no answer-quality feedback yet. Collecting 👍/👎 ratings and storing them would allow measuring answer quality over time.
 - Ticket IDs are random 5-digit mocks. A real system would integrate with a helpdesk (Zendesk, Freshdesk).

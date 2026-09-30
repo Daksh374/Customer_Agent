@@ -6,14 +6,8 @@ export default function ChatHeader({ onNewChat, canReset }) {
       <div className="brand">
         <div className="brand-avatar" aria-hidden="true">
           <HeadsetIcon size={20} />
-          <span className="status-dot" />
         </div>
-        <div className="brand-text">
-          <h1>Customer Support</h1>
-          <p>
-            <span className="status-label">Online</span> · AI assistant
-          </p>
-        </div>
+        <h1 className="brand-name">TaskFlow</h1>
       </div>
       <button
         type="button"

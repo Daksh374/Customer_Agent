@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import EscalationBanner from "./EscalationBanner.jsx";
-import { AlertIcon, BotIcon, ThumbDownIcon, ThumbUpIcon } from "./Icons.jsx";
+import { AlertIcon, BotIcon } from "./Icons.jsx";
 import KnowledgePanel from "./KnowledgePanel.jsx";
 
 function formatTime(timestamp) {
@@ -19,33 +19,6 @@ const markdownComponents = {
     </div>
   ),
 };
-
-function FeedbackButtons({ value, onFeedback }) {
-  return (
-    <div className="feedback" role="group" aria-label="Was this answer helpful?">
-      <button
-        type="button"
-        className={value === "up" ? "active" : ""}
-        onClick={() => onFeedback("up")}
-        aria-pressed={value === "up"}
-        aria-label="Helpful"
-        title="Helpful"
-      >
-        <ThumbUpIcon size={15} />
-      </button>
-      <button
-        type="button"
-        className={value === "down" ? "active" : ""}
-        onClick={() => onFeedback("down")}
-        aria-pressed={value === "down"}
-        aria-label="Not helpful"
-        title="Not helpful"
-      >
-        <ThumbDownIcon size={15} />
-      </button>
-    </div>
-  );
-}
 
 function OfferButtons({ onReply, disabled }) {
   return (
@@ -68,7 +41,7 @@ function AssistantAvatar() {
   );
 }
 
-export default function MessageBubble({ message, onFeedback, onRetry, onOfferReply, busy }) {
+export default function MessageBubble({ message, onRetry, onOfferReply, busy }) {
   if (message.role === "user") {
     return (
       <div className="message-row user" data-message-id={message.id}>
@@ -113,10 +86,7 @@ export default function MessageBubble({ message, onFeedback, onRetry, onOfferRep
         )}
         {message.escalate && <EscalationBanner ticketId={message.ticketId} reason={message.escalationReason} />}
         <KnowledgePanel sources={message.sources} />
-        <div className="meta-row">
-          <span className="meta">{formatTime(message.time)}</span>
-          <FeedbackButtons value={message.feedback} onFeedback={onFeedback} />
-        </div>
+        <span className="meta">{formatTime(message.time)}</span>
       </div>
     </div>
   );

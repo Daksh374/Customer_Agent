@@ -51,20 +51,6 @@ export const BotIcon = (p) => (
   </Icon>
 );
 
-export const ThumbUpIcon = (p) => (
-  <Icon {...p}>
-    <path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3z" />
-    <path d="M7 10l4-8a3 3 0 0 1 3 3v4h5.5a2 2 0 0 1 2 2.3l-1.4 8A2 2 0 0 1 18.1 21H7" />
-  </Icon>
-);
-
-export const ThumbDownIcon = (p) => (
-  <Icon {...p}>
-    <path d="M17 14V3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-3z" />
-    <path d="M17 14l-4 8a3 3 0 0 1-3-3v-4H4.5a2 2 0 0 1-2-2.3l1.4-8A2 2 0 0 1 5.9 3H17" />
-  </Icon>
-);
-
 export const ChevronIcon = (p) => (
   <Icon {...p}>
     <path d="m6 9 6 6 6-6" />

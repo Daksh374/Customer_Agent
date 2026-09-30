@@ -18,7 +18,6 @@
   --brand-soft: #eef0ff;
   --brand-soft-border: #d5d8ff;
   --on-brand: #ffffff;
-  --online: #22c55e;
 
   --warning-bg: #fffbeb;
   --warning-border: #f6d58a;
@@ -174,7 +173,6 @@ button:disabled {
 }
 
 .brand-avatar {
-  position: relative;
   flex: none;
   display: grid;
   place-items: center;
@@ -185,40 +183,11 @@ button:disabled {
   color: var(--on-brand);
 }
 
-.status-dot {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--online);
-  border: 2px solid var(--surface);
-}
-
-.brand-text {
-  min-width: 0;
-}
-
-.brand-text h1 {
+.brand-name {
   margin: 0;
-  font-size: 1rem;
-  font-weight: 650;
+  font-size: 1.1rem;
+  font-weight: 700;
   letter-spacing: -0.01em;
-}
-
-.brand-text p {
-  margin: 1px 0 0;
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.status-label {
-  color: var(--online);
-  font-weight: 600;
 }
 
 .header-button {
@@ -410,12 +379,6 @@ button:disabled {
   padding: 0 4px;
 }
 
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* Typing indicator */
 .bubble.typing {
   display: flex;
@@ -590,7 +553,7 @@ button:disabled {
 }
 
 /* ==========================================================================
-   Escalation card, sources, feedback
+   Escalation card, sources
    ========================================================================== */
 
 .escalation-card {
@@ -695,34 +658,6 @@ button:disabled {
   font-size: 0.78rem;
   color: var(--text-muted);
   line-height: 1.45;
-}
-
-.feedback {
-  display: flex;
-  gap: 2px;
-}
-
-.feedback button {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-subtle);
-  transition: background 0.15s, color 0.15s;
-}
-
-.feedback button:hover {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.feedback button.active {
-  background: var(--brand-soft);
-  border-color: var(--brand-soft-border);
-  color: var(--brand);
 }
 
 /* ==========================================================================
@@ -841,10 +776,6 @@ button:disabled {
 @media (max-width: 340px) {
   .topic-grid {
     grid-template-columns: 1fr;
-  }
-
-  .brand-text p {
-    display: none;
   }
 }
 

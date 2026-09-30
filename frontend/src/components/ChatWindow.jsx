@@ -24,7 +24,6 @@ function toAssistantMessage(data) {
     ticketId: data.ticket_id,
     offerEscalation: data.offer_escalation,
     offerAnswered: false,
-    feedback: null,
   };
 }
 
@@ -114,14 +113,6 @@ export default function ChatWindow({ onNewChat }) {
     sendMessage(errorMessage.retryText);
   }
 
-  function setFeedback(messageId, value) {
-    const target = messages.find((m) => m.id === messageId);
-    if (!target) return;
-    const next = target.feedback === value ? null : value; // clicking again clears the vote
-    console.log(`[feedback] ${messageId}: ${next ?? "cleared"}`);
-    setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, feedback: next } : m)));
-  }
-
   return (
     <div className="chat-window">
       <ChatHeader onNewChat={onNewChat} canReset={messages.length > 0 && !isLoading} />
@@ -136,7 +127,6 @@ export default function ChatWindow({ onNewChat }) {
                 key={m.id}
                 message={m}
                 busy={isLoading}
-                onFeedback={(value) => setFeedback(m.id, value)}
                 onOfferReply={(accept) => sendMessage(accept ? "Yes, connect me to a human agent" : "No, thanks")}
                 onRetry={() => retry(m)}
               />
